@@ -41,3 +41,8 @@ Pop up a terminal (cmd for windows) manouver to the folder you want to place the
 ```
 git clone https://github.com/martigso/stv4020b.git
 ```
+
+Updates can be downloaded by running:
+```
+git pull origin master
+```
