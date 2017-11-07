@@ -1,0 +1,394 @@
+---
+title: "Seminar 3"
+author: "Martin Søyland"
+output:
+ html_document:
+urlcolor: cyan
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = FALSE)
+knitr::opts_knit$set(root.dir = "../")
+options(width = 100)
+
+rm(list = ls())
+```
+
+# Disposition
+1. Structure and expectations
+2. Installing and loading packages
+3. Burnside & Dollar (2000)
+4. Load data
+5. Replication (initial)
+6. Identifying problems
+7. Fix problems
+8. Are we there yet?
+9. OLS Diagnostics
+9. Interpretation of interaction
+
+
+# Structure and expectations
+
+## Group 1
+
+| Date         | Time	       | Activity	 | Place	           |
+| ------------ | ----------- | --------- | ----------------- |
+| Mo. 13. Nov. | 14:15–16:00 | Seminar 1 | HH Seminarrom 201 |
+| Mo. 20. Nov. | 14:15–16:00 | Seminar 1 | HH Seminarrom 201 |
+| Mo. 27. Nov. | 14:15–16:00 | Seminar 1 | HH Seminarrom 201 |
+| Mo. 4. Dec.  | 14:15–16:00 | Seminar 1 | HH Seminarrom 201 |
+| Mo. 11. Dec. | 14:15–16:00 | Seminar 1 | HH Seminarrom 201 |
+
+## Group 2
+
+| Date         | Time	       | Activity	 | Place	           |
+| ------------ | ----------- | --------- | ----------------- |
+| Mo. 13. Nov. | 12:15–14:00 | Seminar 2 | HH Seminarrom 201 |
+| Mo. 20. Nov. | 12:15–14:00 | Seminar 2 | HH Seminarrom 201 |
+| Mo. 27. Nov. | 12:15–14:00 | Seminar 2 | HH Seminarrom 201 |
+| Mo. 4. Dec.	 | 12:15–14:00 | Seminar 2 | HH Seminarrom 201 |
+| Mo. 11. Dec. | 12:15–14:00 | Seminar 2 | HH Seminarrom 201 |
+
+# Expectations
+1. We will use significantly less time on basics -- you need to know:
+    - How to load data in different formats
+    - How to structure R-files in folders and keep everything tidy
+    - How to install and load external packages 
+    - How to do basic recoding (ifelse, which, etc)
+    - How to make nice graphs (plot or ggplot)
+    - How to run basic regression models in R (lm, glm, lmer, etc)
+2. It is important to know the basics and importance of replicating standing studies
+    - See this article by [Garry King](https://gking.harvard.edu/files/replication.pdf)
+3. Remember that R is hard, at first. With practice, however, it is not that bad
+4. If you need repetition/introduction to the basics, look over the material from [STV4020A](https://github.com/martigso/stv4020aR)
+5. The material from the seminars will be available at [github](https://github.com/martigso/stv4020b)
+
+# Installing and loading packages
+
+
+```{r packages}
+library(haven) # Load STATA data
+library(dplyr) # Package for easy and fast data structuring
+library(ggplot2) # Package for plotting
+library(sandwich) # Package for different types of standard errors
+library(stargazer) # Package for making nice tables in html or latex format
+```
+
+# Burnside & Dollar (2000)
+<blockquote>
+We find that aid has a positive impact on growth in developing countries with good fiscal, 
+monetary, and trade policies but has little effect in the presence of poor policies.
+</blockquote>
+
+In this seminar, we will focus on the paper by [Burnside & Dollar (2000)](http://www.jstor.org/stable/117311?seq=1#page_scan_tab_contents) and try to replicate their result. As the quote above illustrates, their main argument is that the effect of aid on economic growth is contingent on how sound the policies for a given country is. The units of analysis is country periods. 
+
+## Variable description:
+
+| **Variable name**      | **Description**                   |
+| ---------------------- | --------------------------------- |
+| gdp_growth             | Per-capita GDP growth             |
+| aid 	                 | Aid/PPP GDP                       |
+| policy                 | Quality of macroeconomic policies | <!-- trade openness / inflation / gov. consumption / budget surplus -->
+| gdp_pr_capita          | Initial PPP GDP per capita        |
+| ethnic_frac 	         | Ethnic fractionalization          |
+| assasinations	         | Assassinations                    |
+| sub_saharan_africa  	 | Sub-Saharan Africa                |
+| fast_growing_east_asia | East Asia                         |
+| institutional_quality  | Institutional quality             |
+| m2_gdp_lagged	         | M2/GDP, lagged one period         |
+| period	               | Period indicator                  |
+
+
+## Original model
+We will focus on model 5 from the paper. The results from that model is reported as:
+
+| **Variable**                | **Estimate (Std. Error)**   |
+| --------------------------- | --------------------------- |
+| Initial GDP                 | -0.60 (0.57)                |
+| Ethnic fractionalization    | -0.42 (0.72)                |
+| Assasinations               | -0.45 (0.26) \*             |
+| Ethnic F. * Assassinations  |  0.79 (0.44) \*             |
+| Institutional quality       |  0.69 (0.17) \*\*           |
+| M2/GDP lagged               |  0.012 (0.014)              |
+| Sub-Saharan Africa          | -1.87 (0.75) \*\*           |
+| East Asia                   |  1.31 (0.58) \*\*           |
+| Policy index                |  0.71 (0.19) \*\*           |
+| Aid/GDP                     | -0.021 (0.16)               |
+| (Aid/GDP) * policy          |  0.19 (0.07) \*\*           |
+| | |
+| *Notes: * | |
+| *\* Significant at the 10-percent level.* | |
+| *\*\* Significant at the 5-percent level* | |
+
+Notice anything missing here?
+
+
+# Loading data (from dta)
+
+We will start by loading the data in STATA format (.dta files), using the `read.dta()` function.
+
+```{r lasteSTATA}
+
+aid <- read_dta("./data/aidgrowth.dta")
+head(aid, 3)
+
+```
+
+# Replication (initial)
+
+We look at the original model (shown above) and give a standard R formula to the `lm()` function with the varibles shown in the table.
+
+```{r initialOLS, tidy=FALSE}
+
+initial_model5 <- lm(gdp_growth ~ gdp_pr_capita + ethnic_frac * assasinations + 
+                       institutional_quality + m2_gdp_lagged + 
+                       sub_saharan_africa + fast_growing_east_asia + policy * aid,
+                     data = aid)
+summary(initial_model5)
+
+```
+
+# Identifying problems
+The results are not the same, which means we have missed something by looking just at the table. Reading the paper, I identified five problems with our initial replication:
+
+1. "[...] <i>y<sub>it</sub></i> is the logarithm of initial real per capita GDP [...]"
+- No indication of logging in the table
+2. "[...] <i>a<sub>t</sub></i> are fixed-time effect [...]"
+- FE not shown in the regression table
+3. "[...]  we include regional dummy variables for sub-Saharan Africa and East Asia [...]"
+- The variable takes the wrong class after loading the data
+4. The intercept is not printet!
+5. "[...] we use heteroskedasticity-consistent standard errors of the type proposed by Halbert White [...]"
+- This is one 
+
+# Fix problems
+
+## Logging variables
+
+The tables in the article do not report that GDP per capita is log transformed. However, this is stated in the data section of the paper. If we hope to replicate the results, we will have to log transform the varible ourself. To illustrate what happens with the variable when we log it, I also include a plot between the old (not logged) and new (logged) variable.
+
+```{r logGdp}
+
+aid$gdp_pr_capita_log <- log(aid$gdp_pr_capita)
+
+ggplot(aid, aes(x = gdp_pr_capita, y = gdp_pr_capita_log)) + 
+  geom_line() + theme_classic() +
+  labs(x = "Gdp per capita", y = "Gdp per capita (logged)") +
+  theme(panel.grid.major.y = element_line(color = "gray 90"))
+
+```
+
+In short, we now assume that it is more important to increase GDP per capita when you already have low GDP per capita than when you already have high GDP per capita.
+
+## Recode regions
+
+Recoding can be done in a myriad of ways. Here, we fix the regional dummies by putting them into *one* variable and putting "Other" as the reference category. The recoding is parsed with the `mutate()` function from the *dplyr* package. Notice that the syntax is very different here. "%>%" is a pipe; it tells R that we are going to use the preceeding code, but that we are not finished yet.
+
+```{r mutate, tidy=FALSE}
+
+table(aid$fast_growing_east_asia, useNA = "always")
+table(aid$sub_saharan_africa, useNA = "always")
+
+aid <- aid %>% 
+  mutate(regions = ifelse(sub_saharan_africa == 1, "Sub-Saharan Africa",
+                          ifelse(fast_growing_east_asia == 1, "East Asia", "Other")))
+
+table(aid$regions, aid$fast_growing_east_asia, useNA = "always")
+table(aid$regions, aid$sub_saharan_africa, useNA = "always")
+
+
+aid$regions <- factor(aid$regions, levels = c("Other", "Sub-Saharan Africa", "East Asia"))
+summary(aid$regions)
+
+```
+
+# Are we there yet?
+
+After fixing the problems that would bias our *coefficients*, we can run the model again and compare to the original model.
+
+```{r fixedOLS, tidy=FALSE}
+model5 <- lm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
+               institutional_quality + m2_gdp_lagged + regions + policy * aid +
+               factor(period),
+             data = aid, na.action = "na.exclude", x = TRUE)
+summary(model5)
+```
+
+The estimates are now correct. But, we still have incorrect uncertainty around our estimates compared to the original results. Burnside & Dollar state in their paper that they have used **heteroskedasticity-consistent standard errors**. Remember from the lecture that the square root of the diagonal in the covariance matrix give us the standard errors. We can utilize this knowledge with the `vcov()` function:
+
+# Adjusting standard errors
+
+```{r vcov_fun}
+# Standard errors from summary
+summary(model5)$coefficients[, "Std. Error"]
+
+# Standard errors from covariance matrix
+sqrt(diag(vcov(model5)))
+
+
+# Side by side
+cbind(summary(model5)$coefficients[, "Std. Error"], 
+      sqrt(diag(vcov(model5))))
+
+```
+
+Furthermore, the *sandwich* package can give us the corrected standard errors.
+```{r hetero_std_err}
+
+vanilla_std_err <- round(sqrt(diag(vcov(model5))), digits = 2)
+het_std_err <- round(sqrt(diag(vcovHC(model5, type = "HC"))), digits = 2)
+original_model_std_err <- c("--", 0.57, 0.72, 0.26, 0.17, 0.01, 0.75, 0.58, 0.19, "--", "--", "--", "--", "--", "--", 0.44, 0.07)
+
+cbind(vanilla_std_err, het_std_err, original_model_std_err)
+
+```
+
+The question on how to make this into a nice table remains. The stargazer package works pretty well for most (not all) regression models. Note that we never changed the standard errors in the regression itself. We can, instead, use the `se = ` argument in stargazer to change the standard errors for the models:
+
+
+```{r stargazer_comp, tidy=FALSE, results='asis'}
+
+stargazer(initial_model5, model5, model5,
+          type = "html", column.labels = c("First try", "Second try", "Hurray!"),
+          dep.var.caption	= c("GDP growth"), dep.var.labels.include = FALSE,
+          se = list(sqrt(diag(vcov(initial_model5))), sqrt(diag(vcov(model5))), 
+                    sqrt(diag(vcovHC(model5, type = "HC")))),
+          keep.stat = c("n", "rsq", "adj.rsq", "aic"),
+          covariate.labels = c("Intercept", "GDP per capita", "GDP per capita (logged)", 
+                               "Ethnic fractionalization","Assasinations", "Institutional quality", 
+                               "M2/GDP lagged", "Sub-Saharan Africa", "East Asia", 
+                               "Sub-Saharan Africa", "East Asia", "Policy index", "Aid/GDP", 
+                               "Ethic f. * Assasinations", "Aid/GDP * policy",
+                               "Period (3)", "Period (4)", "Period (5)", "Period (6)", "Period (7)"),
+          order = c(20, 1:12, 18:19, 13:17),
+          star.cutoffs = c(0.05, 0.01, 0.001))
+
+```
+
+## PCSE (Beck and Katz)
+It does not work well with our panel (it is too unbalanced), but the Beck and Katz-style PCSE:
+
+```{r panel_corrected_std_err, tidy=FALSE}
+aid_nona <- aid %>% 
+  select(c("country", "gdp_growth", "gdp_pr_capita_log", "ethnic_frac", "assasinations", 
+           "institutional_quality", "m2_gdp_lagged", "regions", "policy", "aid", "period")) %>% 
+  na.omit() %>% 
+  group_by(country) %>% 
+  filter(length(country) == 6)
+
+
+model5_nona <- lm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
+                    institutional_quality + m2_gdp_lagged + regions + policy * aid +
+                    factor(period), data = aid_nona)
+summary(model5_nona)
+library(pcse)
+
+model5_pcse <- pcse(model5_nona, groupN = aid_nona$country, groupT = aid_nona$period)
+summary(model5_pcse)
+
+```
+
+
+
+# Robustness
+
+Recall the robustness tests for OLS from STV4020A. We can use eye-ball tests:
+```{r eyeball}
+
+# Putting residuals and fitted values into the data frame
+aid$pred <- predict(model5)
+aid$res <- resid(model5)
+
+# Plotting normality of residuals
+ggplot(aid, aes(x = res)) +
+  geom_histogram(bins = 50, aes(y = ..density..)) +
+  stat_function(fun=dnorm, color="red",
+                args=list(mean=mean(aid$res, na.rm = TRUE), 
+                          sd=sd(aid$res, na.rm = TRUE))) +
+  scale_y_continuous(limits = c(0, .21), expand = c(0,0)) +
+  theme_classic() + labs(y = "Density", x = "Residuals") 
+
+# Plotting residuals vs fitted values (heteroscedasticity)
+ggplot(aid, aes(x = res, y = pred)) + 
+  geom_point() +
+  geom_smooth(method = "lm", color = "darkcyan", fill = "darkcyan", alpha = .1) +
+  labs(x = "Residuals", y = "Predicted") +
+  theme_classic()
+
+# Autocorrelation
+aid %>% 
+  arrange(country, period) %>%
+  group_by(country) %>% 
+  select(country, period, res) %>% 
+  mutate(res_t1 = lag(res)) %>% 
+  ggplot(aes(x = res, y = res_t1)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "darkcyan", fill = "darkcyan", alpha = .1) +
+  labs(x = "Residuals", y = "Residuals (t+1)") +
+  theme_classic() +
+  theme(panel.grid.major.y = element_line(color = "gray90"))
+```
+
+Or, more formal tests:
+
+```{r formaltests}
+# Shapiro-Wilk test of normality.
+shapiro.test(aid$res)
+
+# Variance inflation factors to check for multicolinearity 
+car::vif(model5)
+
+# Inspect the correlation matrix. Which variables are correlating highly?
+cor_mat <- cor(model5$x[, 2:ncol(model5$x)])
+cor_mat
+
+apply(cor_mat, 2, function(x) ifelse(x < .25, NA, x))
+
+# Breusch-Pagan test
+lmtest::bptest(model5)
+
+# Durbin-Watson test
+lmtest::dwtest(model5)
+```
+
+# Beyond Burnside & Dollar
+
+## Fixed and random effects
+
+
+```{r fe_vs_ranef}
+
+
+model_fe <- lm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
+               institutional_quality + m2_gdp_lagged + regions + policy * aid +
+                factor(country),
+             data = aid, na.action = "na.exclude", x = TRUE)
+head(summary(model_fe)$coefficients)
+
+ 
+# or using plm(): 
+library(plm)
+model_fe2 <- plm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
+               institutional_quality + m2_gdp_lagged + regions + policy * aid,
+               index = c("country", "period"), model = "within", effect = "individual",
+             data = aid)
+
+summary(model_fe2)
+
+model_ranef <- plm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
+                     institutional_quality + m2_gdp_lagged + regions + policy * aid,
+                   index = c("country", "period"), model = "random", effect = "individual",
+                   data = aid)
+
+summary(model_ranef)
+
+## We can use the Hausman test to test whether RE is unbiased: 
+phtest(model_fe2, model_ranef)  
+## We reject the null hypothesis that the two models are similar
+
+```
+
+```{r ikketenkpådenne, eval=FALSE, echo=FALSE}
+knitr::purl("./docs/1seminar.Rmd", output = "./scripts/1seminar.R", documentation = 1)
+
+```
