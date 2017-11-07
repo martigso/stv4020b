@@ -33,3 +33,11 @@
 3. Remember that R is hard, at first. With practice, however, it is not that bad
 4. If you need repetition/introduction to the basics, look over the material from [STV4020A](https://github.com/martigso/stv4020aR)
 5. The material from the seminars will be available at [github](https://github.com/martigso/stv4020b)
+
+# Want to clone the repository?
+In order to clone this repository, you need a working version of git.
+
+Pop up a terminal (cmd for windows) manouver to the folder you want to place the repository in. Then type:
+```
+git clone https://github.com/martigso/stv4020b.git
+```
