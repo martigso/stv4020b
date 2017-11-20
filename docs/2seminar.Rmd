@@ -1,0 +1,307 @@
+---
+title: "Seminar 3"
+author: "Martin Søyland"
+output:
+  html_document:
+  urlcolor: cyan
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = FALSE)
+knitr::opts_knit$set(root.dir = "../")
+options(width = 100)
+
+rm(list = ls())
+```
+
+<br><br><br><br>
+
+[Gary King and Margaret E. Roberts (2014)](https://gking.harvard.edu/files/gking/files/robust_0.pdf):
+
+<blockquote>
+The extremely widespread, automatic, and even sometimes unthinking use of robust standard errors accomplishes almost exactly the opposite of its intended goal. In fact, robust and classical standard errors that differ need to be seen as bright red flags that signal compelling evidence of uncorrected model misspecification.
+</blockquote>
+
+# Disposition
+1. Download and load data
+2. Lagging variables
+3. Clustered standard errors
+4. Simulating effects
+5. Interactions
+
+
+# Download and load data
+Today we are replicating the article _Income, Democracy, and Leader Turnover_ by Daniel Treisman (2015). The data comes in Stata format, and can be downloaded by running the `download.file()` function shown below.
+
+```{r load_data}
+
+# download.file("http://folk.uio.no/martigso/stv4020/democworki.dta", destfile = "./data/democworki.dta")
+
+democ <- haven::read_dta("./data/democworki.dta")
+
+head(democ)
+range(democ$year, na.rm = TRUE)
+length(unique(democ$country))
+```
+
+From the output, we see that these are country-year observations, and that we have 215 countries from 1800-2010.
+
+# Lagging
+
+Treisman uses a lagged dependent variable as dependent variable together with other lagged covariates and both country and year fixed effects. Lagging can be done in all sorts of ways, but I prefer sticking to the dplyr, and specifically the `group_by()` function in combination with `lag()`. One example is to use the *plm* package, but this is inferior to dplyr in many ways (especially with large data sets).
+
+```{r lag}
+
+library(dplyr)
+
+democ_lag <- democ %>% 
+  group_by(country) %>% 
+  arrange(country, year) %>% 
+  mutate(pol2norm_lag = lag(pol2norm),
+         lngdppc_lag = lag(lngdppc))
+
+tail(na.omit(democ_lag[,c("country", "year", "pol2norm", "pol2norm_lag")]), 10)
+
+```
+
+Does this seem correct?
+
+# Model 1 (panel A)
+
+In the article, Treisman runs multiple models over different subsamples of the data (see table 2 in the paper). The first model in panel A -- all countries from 1960-2000 -- he has polity2 at t-1, logged GDP per capita at t-1 as the independent variables, and fixed effects for country and year. So, lets first subset the data and then run the model on the subset.
+
+```{r panel_a}
+panel_a <- democ_lag %>% 
+  filter(year > 1959 & year < 2001)
+
+lmA <-lm(pol2norm ~ pol2norm_lag +
+           lngdppc_lag + 
+           factor(country) + 
+           factor(year), 
+         data = panel_a, x = T)
+round(head(summary(lmA)$coefficients, 3), digits = 3)
+length(lmA$coefficients)
+
+```
+
+As the fixed effects inflates the table with independent variables, I print only the first 3 (the intercept + the main interest variables). The estimates are...close enough. However, as last week, this article uses non-standard standard errors. From the STATA script:
+
+<pre>
+reg pol2norm lpol2norm llngdppc i.year i.ccode if year>1959&year<2001, rob cluster(ccode)
+</pre>
+
+## Cluster standard errors
+
+In order to get the clustered standard errors, we are using the *multiwayvcov* package, and the `cluster.vcov()` function. As with `vcovHC()` from last week, there are more than one way of doing this. Read the documentation for the package!
+
+```{r cluster}
+library(multiwayvcov) 
+  # I strongly suggest putting packages at the top of the script
+  # I put it here for presentational reasons
+
+lmA_SEs <- sqrt(diag(cluster.vcov(model = lmA, cluster = panel_a$country)))
+
+cbind(round(lmA$coefficients, digits = 2)[1:3], round(lmA_SEs[1:3], digits = 3))
+
+```
+
+The cluster function needs two arguments: a model (here *lmA*) and the cluster variable (*country* in our case). Again, the results are as close to identical to the original as we can come.
+
+# Model 1 (panel B)
+
+It's all rinse and repeat with the first model of panel B: subset, run model, correct the standard errors.
+
+```{r panel_b}
+panel_b <- democ_lag %>% 
+  filter(year > 1819 & year < 2009) %>% 
+  group_by(country) %>% 
+  filter(lag(polity2) < 6)
+
+lmB <- lm(pol2norm ~ pol2norm_lag + lngdppc_lag + factor(country) + 
+            factor(year), data = panel_b) 
+
+
+lmB_SEs <- sqrt(diag(cluster.vcov(model = lmB, cluster = panel_b$country)))
+
+cbind(round(lmB$coefficients, digits = 3)[1:3], round(lmB_SEs[1:3], digits = 3))
+
+```
+
+And, here is a bad example of a table
+
+```{r stargazer, results='asis'}
+stargazer::stargazer(lmA, lmB, ##our models
+                     se = list(lmA_SEs, lmB_SEs), ## our clustered standard errors
+                     omit = c("country", "year"), ## we omit all the dummies
+                     omit.labels = c("Country dummies", ## but ALWAYS include information that they exist
+                                     "Year dummies"), 
+                     type="html")
+```
+
+# Simulation
+
+Now to a more difficult part. To understand the theory behind this, do read the [King et.al (2000)](https://www.jstor.org/stable/2669316?seq=1#page_scan_tab_contents) article on the syllabus. The code below simulates the expected values for the logged GDP per capita variable, based on the first regression of panel A. The basic idea is to produce a large amount of samples based on our model, and see how much the predicted values differ. Do not be alarmed by the code, but run it line for line, and pay attention to the objects it produces.
+
+```{r sim}
+library(MASS)
+simb <- mvrnorm(n = 1000, # let's run 1000 samples
+                mu = lmA$coefficients, # means of the variables, taken from the regression
+                Sigma = cluster.vcov(model = lmA, cluster = panel_a$country)) 
+                                       # covariance matrix of the variables
+
+simb[1:10, 1:3]
+nrow(simb);ncol(simb)
+
+range_lag_lngdppc <- seq(min(lmA$x[, "lngdppc_lag"]), max(lmA$x[, "lngdppc_lag"]), by=0.1)
+  # sequence range of the independent variable we are looking at
+
+spain1976 <- lmA$x[lmA$x[,"factor(year)1976"]==1 & lmA$x[,"factor(country)Spain"]==1]
+  # The model matrix for Spain 1976 
+
+set.x <- sapply(1:length(range_lag_lngdppc), function(x) return(spain1976)) 
+  # Here, I repeat the Spain case as many times as range_lag_lngdppc is long
+
+set.x <- t(set.x)
+  # And then, I flip the matrix
+
+set.x[,3] <- range_lag_lngdppc
+  # Now we are constructing a sort of "counterfactural"
+
+set.x[,3]
+
+x.beta <-  set.x %*% t(simb)
+  # multiply the simulated betas with our set of x-values. 
+
+dim(x.beta)
+  # We have all 52 Spain cases over 1000 simulations
+
+exp.y <- x.beta 
+  # Because we have an ols model expected y = beta*x
+  # In other models, you will have to replace this with a formula (glm, nlb, etc...you will see)
+
+exp.y[1:5, 1:3]
+
+quantile.values <- apply(X = exp.y, MARGIN = 1, FUN = quantile, probs = c(.025, .5, .975))
+  # Here, we extract the lower, median, and upper confidence values for each ROW (MARGIN = 1)
+  # Remember that each row is a different value for range_lag_lngdppc
+
+plot_points <- data.frame(range_lag_lngdppc, t(quantile.values), row.names = 1:length(range_lag_lngdppc))
+  # the result is now put into a data frame
+
+names(plot_points) <- c("lngdppc_lag", "lwr", "m", "upr")
+  # make the variable names better
+
+
+library(ggplot2) # the rest should be familiar!
+ggplot(plot_points, aes(x = lngdppc_lag, y = m)) + 
+  geom_line(color = "darkcyan", size = 1) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = .5, fill = "lightblue") +
+  theme_classic()+
+  labs(x = "Logged GDP per capita", y = "Simulated value (95% bands)") +
+  theme(panel.grid.major.y = element_line(color = "gray90"))
+
+summary(panel_a$pol2norm)
+
+```
+
+Are we impressed by the effect?
+
+# Interactions
+
+In panel C of table 2, the paper includes an interaction. As described by [Brambor et.al (2006)](https://www.jstor.org/stable/25791835?seq=1#page_scan_tab_contents), interpretation of interactions are often misunderstood or undercommunicated in papers. I will show two ways of plotting interactions. The second method is prefered by me, but it works less than optimal with clustered/robust standard errors.
+
+The first method hinges on the fact that the _Leader exited at t-1_ variable is a dummy. Here, we can estimate the model twice; one model with the original dummy and one with a inverse version (`ifelse()` code below flips it).
+
+```{r interactions}
+
+panel_c <- democ_lag %>% 
+  group_by(country) %>% 
+  mutate(leaderturn_lag = lag(leaderturn),
+         leaderturn_lag_flip = ifelse(leaderturn_lag == 1, 0, 1)) %>% 
+  filter(year > 1874 & year < 2005 & lag(polity2) < 6)
+
+lmC <- lm(pol2norm ~ pol2norm_lag + lngdppc_lag + leaderturn_lag + 
+            I(leaderturn_lag * lngdppc_lag) + ### Note the interaction term
+            factor(country) + factor(year), data = panel_c, x = TRUE)
+head(round(summary(lmC)$coefficients, digits = 3))
+
+## if one of the variables in the interaction
+## is a dummy variable, We can create a useful figure by estimating the model
+## twice, varying which category is zero and plot the conditional effect of the 
+## other variable 
+
+
+lmC2 <-lm(pol2norm ~ pol2norm_lag + lngdppc_lag + leaderturn_lag_flip +
+            I(leaderturn_lag_flip * lngdppc_lag) + ### Note the interaction term
+            factor(country) + factor(year),
+          data=panel_c)
+
+
+effects <- data.frame(model = c("No exit", "Exit"), 
+                      coefs = c(lmC$coefficients[3] , lmC2$coefficients[3]),  # coefficients from both models
+                      ses = c(sqrt(diag(cluster.vcov(lmC, cluster = panel_c$country)))[3],
+                              sqrt(diag(cluster.vcov(lmC2, cluster=panel_c$country)))[3])) # standard errors from both models
+
+effects$upper <- effects$coefs + abs(qt(0.05/2, length(lmC$fitted.values))) * effects$ses # upper limit of confidence interval
+effects$lower <- effects$coefs - abs(qt(0.05/2, length(lmC$fitted.values))) * effects$ses # lower limit of confidence interval
+
+ggplot(effects, aes(x = model, y = coefs)) +
+  geom_pointrange(aes(ymin = lower, ymax = upper)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  theme_classic() + labs(x = "Leader exit in t-1", y = "Effect of log(GDP per capita) in t-1")
+
+
+```
+
+
+The second plotting option uses somewhat the same method as we did with simulations ... only quicker. I strongly suggest to use the simulation method with robust/clustered standard erros, and maybe otherwise aswell.
+
+```{r interactions2}
+# Creating the same hypothetical as above, varying the two interaction terms
+newdata <- data.frame(lngdppc_lag = rep(min(panel_c$lngdppc_lag, na.rm = TRUE):
+                                          max(panel_c$lngdppc_lag, na.rm = TRUE), 2),
+                      pol2norm_lag = mean(panel_c$pol2norm_lag, na.rm = TRUE),
+                      leaderturn_lag = c(rep(0, 6), rep(1, 6)),
+                      country = "Spain",
+                      year = "1976")
+
+# Putting in predicted values -- solving the regression equation on "newdata"
+newdata <- data.frame(newdata, predict(lmC, newdata = newdata, interval = "confidence")) 
+    # NOTE! THE STD ERRORS ARE NOT CLUSTERED HERE! Conf. int will be wrong, but not hoplessly wrong
+    # See quote at the start of the document!
+
+round(cbind(clust = sqrt(diag(cluster.vcov(lmC, cluster = panel_c$country)))[1:5], 
+            vanilla = sqrt(diag(vcov(lmC)))[1:5]), digits = 3)
+
+# Plot!
+interaction <- ggplot(newdata,aes(x = lngdppc_lag, y = fit, 
+                                  color = factor(leaderturn_lag),
+                                  fill = factor(leaderturn_lag))) 
+#  First without conf int (as in the paper)
+interaction + geom_line() + theme_classic()
+
+# Now with confint
+interaction + geom_line() + theme_classic() +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, color = NULL), alpha = .2)
+
+# And some prettying
+interaction + geom_line() + theme_classic() +
+  geom_ribbon(aes(ymin = lwr, ymax = upr, color = NULL), alpha = .2) +
+  scale_y_continuous(breaks = seq(0, 1, .025)) +
+  scale_color_manual(values = c("darkcyan", "darkred")) +
+  scale_fill_manual(values = c("darkcyan", "darkred")) +
+  labs(x = "Log(GDP per capita) in t-1", y = "Predicted value",
+       color = "Leader exit in t-1", fill = "Leader exit in t-1") +
+  theme(legend.position = c(.2,.9),
+        legend.key.width = unit(1.5, "cm"))
+
+```
+
+FIN!
+
+```{r ikketenkpådenne, eval=FALSE, echo=FALSE}
+knitr::purl("./docs/2seminar.Rmd", output = "./scripts/2seminar.R", documentation = 1)
+
+```

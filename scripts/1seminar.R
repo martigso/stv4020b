@@ -6,15 +6,22 @@ options(width = 100)
 rm(list = ls())
 
 ## ----packages------------------------------------------------------------
-library(haven) # Load STATA data
-library(dplyr) # Package for easy and fast data structuring
-library(ggplot2) # Package for plotting
-library(sandwich) # Package for different types of standard errors
+library(haven)     # Load STATA data
+library(dplyr)     # Package for easy and fast data structuring
+library(ggplot2)   # Package for plotting
+library(sandwich)  # Package for different types of standard errors
 library(stargazer) # Package for making nice tables in html or latex format
+library(pcse)      # Panel corrected standard errors
+library(plm)       # Panel data linear models
+
 
 ## ----lasteSTATA----------------------------------------------------------
 
+
 aid <- read_dta("./data/aidgrowth.dta")
+# or from github
+# aid <- read_dta("https://github.com/martigso/stv4020b/raw/master/data/aidgrowth.dta")
+
 head(aid, 3)
 
 
@@ -78,12 +85,13 @@ cbind(summary(model5)$coefficients[, "Std. Error"],
 
 vanilla_std_err <- round(sqrt(diag(vcov(model5))), digits = 2)
 het_std_err <- round(sqrt(diag(vcovHC(model5, type = "HC"))), digits = 2)
-original_model_std_err <- c("--", 0.57, 0.72, 0.26, 0.17, 0.01, 0.75, 0.58, 0.19, "--", "--", "--", "--", "--", "--", 0.44, 0.07)
+original_model_std_err <- c("--", 0.57, 0.72, 0.26, 0.17, 0.01, 0.75, 0.58, 0.19, 
+                            "--", "--", "--", "--", "--", "--", 0.44, 0.07)
 
 cbind(vanilla_std_err, het_std_err, original_model_std_err)
 
 
-## ----stargazer_comp, tidy=FALSE, results='asis'--------------------------
+## ----stargazer_comp, results='asis'--------------------------------------
 
 stargazer(initial_model5, model5, model5,
           type = "html", column.labels = c("First try", "Second try", "Hurray!"),
@@ -114,10 +122,12 @@ model5_nona <- lm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations +
                     institutional_quality + m2_gdp_lagged + regions + policy * aid +
                     factor(period), data = aid_nona)
 summary(model5_nona)
-library(pcse)
 
 model5_pcse <- pcse(model5_nona, groupN = aid_nona$country, groupT = aid_nona$period)
+
 summary(model5_pcse)
+
+stargazer(model5_pcse)
 
 
 ## ----eyeball-------------------------------------------------------------
@@ -158,6 +168,8 @@ aid %>%
 ## ----formaltests---------------------------------------------------------
 # Shapiro-Wilk test of normality.
 shapiro.test(aid$res)
+## This means that we would reject the NULL hypothesis that the samples came from a Normal distribution.
+
 
 # Variance inflation factors to check for multicolinearity 
 car::vif(model5)
@@ -166,7 +178,7 @@ car::vif(model5)
 cor_mat <- cor(model5$x[, 2:ncol(model5$x)])
 cor_mat
 
-apply(cor_mat, 2, function(x) ifelse(x < .25, NA, x))
+# apply(cor_mat, 2, function(x) ifelse(x < .25, NA, x))
 
 # Breusch-Pagan test
 lmtest::bptest(model5)
@@ -185,7 +197,6 @@ head(summary(model_fe)$coefficients)
 
  
 # or using plm(): 
-library(plm)
 model_fe2 <- plm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
                institutional_quality + m2_gdp_lagged + regions + policy * aid,
                index = c("country", "period"), model = "within", effect = "individual",
@@ -206,6 +217,6 @@ phtest(model_fe2, model_ranef)
 
 
 ## ----ikketenkpådenne, eval=FALSE, echo=FALSE-----------------------------
-## knitr::purl("./docs/seminar3.Rmd", output = "./scripts/3seminar.R", documentation = 2)
+## knitr::purl("./docs/1seminar.Rmd", output = "./scripts/1seminar.R", documentation = 1)
 ## 
 

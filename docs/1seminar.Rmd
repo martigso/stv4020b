@@ -1,5 +1,5 @@
 ---
-title: "Seminar 3"
+title: "Seminar 1"
 author: "Martin Søyland"
 output:
  html_document:
@@ -65,13 +65,19 @@ rm(list = ls())
 
 # Installing and loading packages
 
+R has a vast amount of packages. These can be installed with the `install.packages()` function: `install.packages("sandwich")`, for example, will install the sandwich package. You only need to install the package *once*, so do not keep lines with the `install.packages()` function in your script.
+
+Each time you open a new R-session, you will need to load the installed package you are going to use with `library()`. This opens the package, and makes available all its functions and functionality. For this seminar, we are using the packages listed in the code chunck below.
 
 ```{r packages}
-library(haven) # Load STATA data
-library(dplyr) # Package for easy and fast data structuring
-library(ggplot2) # Package for plotting
-library(sandwich) # Package for different types of standard errors
+library(haven)     # Load STATA data
+library(dplyr)     # Package for easy and fast data structuring
+library(ggplot2)   # Package for plotting
+library(sandwich)  # Package for different types of standard errors
 library(stargazer) # Package for making nice tables in html or latex format
+library(pcse)      # Panel corrected standard errors
+library(plm)       # Panel data linear models
+
 ```
 
 # Burnside & Dollar (2000)
@@ -80,7 +86,7 @@ We find that aid has a positive impact on growth in developing countries with go
 monetary, and trade policies but has little effect in the presence of poor policies.
 </blockquote>
 
-In this seminar, we will focus on the paper by [Burnside & Dollar (2000)](http://www.jstor.org/stable/117311?seq=1#page_scan_tab_contents) and try to replicate their result. As the quote above illustrates, their main argument is that the effect of aid on economic growth is contingent on how sound the policies for a given country is. The units of analysis is country periods. 
+We will focus on the paper by [Burnside & Dollar (2000)](http://www.jstor.org/stable/117311?seq=1#page_scan_tab_contents) and try to replicate their result. As the quote above illustrates, their main argument is that the effect of aid on economic growth is contingent on how sound the economic policies for a given country is. The units of analysis is country periods.
 
 ## Variable description:
 
@@ -123,20 +129,24 @@ We will focus on model 5 from the paper. The results from that model is reported
 Notice anything missing here?
 
 
-# Loading data (from dta)
+# Loading data from STATAs .dta format
 
 We will start by loading the data in STATA format (.dta files), using the `read.dta()` function.
 
 ```{r lasteSTATA}
 
+
 aid <- read_dta("./data/aidgrowth.dta")
+# or from github
+# aid <- read_dta("https://github.com/martigso/stv4020b/raw/master/data/aidgrowth.dta")
+
 head(aid, 3)
 
 ```
 
 # Replication (initial)
 
-We look at the original model (shown above) and give a standard R formula to the `lm()` function with the varibles shown in the table.
+We look at the original model (shown above) and give a standard R formula to the `lm()` function with the varibles shown in the table. For replications, you obviously need to read the paper carefully first, but I have done that for you this week.
 
 ```{r initialOLS, tidy=FALSE}
 
@@ -159,7 +169,6 @@ The results are not the same, which means we have missed something by looking ju
 - The variable takes the wrong class after loading the data
 4. The intercept is not printet!
 5. "[...] we use heteroskedasticity-consistent standard errors of the type proposed by Halbert White [...]"
-- This is one 
 
 # Fix problems
 
@@ -237,7 +246,8 @@ Furthermore, the *sandwich* package can give us the corrected standard errors.
 
 vanilla_std_err <- round(sqrt(diag(vcov(model5))), digits = 2)
 het_std_err <- round(sqrt(diag(vcovHC(model5, type = "HC"))), digits = 2)
-original_model_std_err <- c("--", 0.57, 0.72, 0.26, 0.17, 0.01, 0.75, 0.58, 0.19, "--", "--", "--", "--", "--", "--", 0.44, 0.07)
+original_model_std_err <- c("--", 0.57, 0.72, 0.26, 0.17, 0.01, 0.75, 0.58, 0.19, 
+                            "--", "--", "--", "--", "--", "--", 0.44, 0.07)
 
 cbind(vanilla_std_err, het_std_err, original_model_std_err)
 
@@ -246,7 +256,7 @@ cbind(vanilla_std_err, het_std_err, original_model_std_err)
 The question on how to make this into a nice table remains. The stargazer package works pretty well for most (not all) regression models. Note that we never changed the standard errors in the regression itself. We can, instead, use the `se = ` argument in stargazer to change the standard errors for the models:
 
 
-```{r stargazer_comp, tidy=FALSE, results='asis'}
+```{r stargazer_comp, results='asis'}
 
 stargazer(initial_model5, model5, model5,
           type = "html", column.labels = c("First try", "Second try", "Hurray!"),
@@ -281,13 +291,16 @@ model5_nona <- lm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations +
                     institutional_quality + m2_gdp_lagged + regions + policy * aid +
                     factor(period), data = aid_nona)
 summary(model5_nona)
-library(pcse)
 
 model5_pcse <- pcse(model5_nona, groupN = aid_nona$country, groupT = aid_nona$period)
+
 summary(model5_pcse)
+
+stargazer(model5_pcse)
 
 ```
 
+Notice that stargazer does not work for all types of objects. Here, the *xtable* package would be better.
 
 
 # Robustness
@@ -334,6 +347,8 @@ Or, more formal tests:
 ```{r formaltests}
 # Shapiro-Wilk test of normality.
 shapiro.test(aid$res)
+## This means that we would reject the NULL hypothesis that the samples came from a Normal distribution.
+
 
 # Variance inflation factors to check for multicolinearity 
 car::vif(model5)
@@ -342,7 +357,7 @@ car::vif(model5)
 cor_mat <- cor(model5$x[, 2:ncol(model5$x)])
 cor_mat
 
-apply(cor_mat, 2, function(x) ifelse(x < .25, NA, x))
+# apply(cor_mat, 2, function(x) ifelse(x < .25, NA, x))
 
 # Breusch-Pagan test
 lmtest::bptest(model5)
@@ -367,7 +382,6 @@ head(summary(model_fe)$coefficients)
 
  
 # or using plm(): 
-library(plm)
 model_fe2 <- plm(gdp_growth ~ gdp_pr_capita_log + ethnic_frac * assasinations + 
                institutional_quality + m2_gdp_lagged + regions + policy * aid,
                index = c("country", "period"), model = "within", effect = "individual",
