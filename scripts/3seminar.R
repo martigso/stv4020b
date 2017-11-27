@@ -1,8 +1,4 @@
 ## ----setup, include=FALSE------------------------------------------------
-knitr::opts_chunk$set(echo = TRUE, tidy = FALSE)
-knitr::opts_knit$set(root.dir = "../")
-options(width = 100)
-
 rm(list = ls())
 
 ## ---- helfer_data--------------------------------------------------------
@@ -18,7 +14,6 @@ head(lgbt[, 1:4])
 ## ---- helfer_exploration-------------------------------------------------
 # Policy (dependent variable)
 table(lgbt$policy)
-
 
 table(lgbt$ecthrpos)
 attributes(lgbt$ecthrpos)
@@ -52,10 +47,10 @@ logit <- glm(policy ~ judgment +          # ECtHR ruling
                coemembe  +                # CoE member
                lngdp +                    # Natural log og gdp per capita
                year +                     # linear time trend
-               factor(issue) +         # fixed effects on issue
+               factor(issue) +         # issue
                factor(ccode),          # fixed effects on country
              data = lgbt, 
-             family = binomial("logit"),  # link = "probit" for probit
+             family = binomial(link = "logit"),  # link = "probit" for probit
              y = TRUE) 
 
 head(round(summary(logit)$coef, 3), 10)
@@ -69,8 +64,8 @@ head(logit_ci, 10)
 ### Getting a nice table in stargazer: 
 stargazer(logit, ## the model we want
           ci = TRUE,  ## telling stargazer we want confidence intervals instead of standard errors
-          coef=list(exp(coef(logit))), # transforming coefficients to odds ratios
-          ci.custom=list(logit_ci), ## calculating confidence intervals
+          coef = list(exp(coef(logit))), # transforming coefficients to odds ratios
+          ci.custom = list(logit_ci), ## calculating confidence intervals
           omit=c("year", "issue", "ccode"), ## using regular expressions to remove linear time trends, and fixed-effects. 
           omit.labels=c("Linear time trend", "Issue fixed effects", "Country fixed effects"), 
           dep.var.labels="Policy change", 
@@ -97,22 +92,28 @@ test_set <- data.frame(judgment = c(rep(0, 10), rep(1, 10)), # setting the judgm
 
 # Binding the test set and predicted probabilities (with se)
 test_set <- data.frame(test_set,
-                        predict(logit, newdata = test_set, type = "response", se.fit = TRUE))
+                        predict(logit, newdata = test_set, se.fit = TRUE))
 
 # Upper and lower confidence bands
 test_set$upr <- test_set$fit + abs(qt(0.05/2, length(logit$fitted.values))) * test_set$se.fit
 test_set$lwr <- test_set$fit - abs(qt(0.05/2, length(logit$fitted.values))) * test_set$se.fit
+
+test_set$prop <- exp(test_set$fit) / (1 + exp(test_set$fit))
+test_set$prop_upr <- exp(test_set$upr) / (1 + exp(test_set$upr))
+test_set$prop_lwr <- exp(test_set$lwr) / (1 + exp(test_set$lwr))
+
 test_set$judgment <- ifelse(test_set$judgment == 1, "Judgment", "No judgment")
 
 # Plotting
 library(ggplot2)
-interaction_plot1 <- ggplot(test_set, aes(x = pubsupport, y = fit, color = factor(judgment)))
+interaction_plot1 <- ggplot(test_set, aes(x = pubsupport, y = prop, color = factor(judgment)))
 
 interaction_plot1 + geom_line() # No confidence bands
 
-interaction_plot1 <- ggplot(test_set, aes(x = pubsupport, y = fit, color = factor(judgment))) +
+interaction_plot1 <- ggplot(test_set, aes(x = pubsupport, y = prop, color = factor(judgment))) +
   geom_line() +
-  geom_ribbon(aes(ymin = lwr, ymax = upr, fill = factor(judgment), color = NULL), alpha = .2)+
+  geom_ribbon(aes(ymin = prop_lwr, ymax = prop_upr, fill = factor(judgment), color = NULL),
+              alpha = .2)+
   labs(y = "Predicted Probability", x = "Public support for LGBT")+
   theme_classic()
 
@@ -158,7 +159,7 @@ ncol(simulated.betas) == ncol(set.x1)
 ##### if we wanted the effect without a ruling we would need to set x variables  differently: 
 
 set.x0 <- cbind(1, # intercept
-                0,  # setting the judgment to 1 
+                0,  # setting the judgment to 0
                 range.x, # setting a range to the public support variable 
                 range.x * 0, ## the interaction term  Since the judgment variable is 0. the interaction term will be range.x *0 ==  0
                 0, ## setting the ecthr judgment against country to 0
@@ -183,23 +184,21 @@ set.x0 <- cbind(1, # intercept
 
 ## for the case with a judgment
 x.beta1 <- set.x1 %*% t(simulated.betas ) # Multiplying the matrices. 
-exp.y1 <- 1/(1+exp(-x.beta1)) #This is the predicted probability 
-
+exp.y1 <- exp(x.beta1)/(1+exp(x.beta1)) #This is the predicted probability 
+exp.y1[1, 1]
 ## for the case without a judgment 
 
 x.beta0 <- set.x0 %*% t(simulated.betas ) # Multiplying the matrices. 
-exp.y0 <- 1/(1+exp(-x.beta0))  #This is the predicted probability 
-
+exp.y0 <- exp(x.beta0)/(1+exp(x.beta0))  #This is the predicted probability 
 
 ### Preparing the plot in the same way as last week
-
 ## for the case with a judgment: 
 quantile.values1 <- apply(X = exp.y1,  ##apply(exp.y1,MARgin = 1 ...) means that I want to do something with all the rows of exp.y1. 
                           MARGIN = 1, 
                           FUN =  ## The fun argument defines what I want to do with all the rows
                             ## What we want to do here is to use quantile to get the quantiles representing the lower and upper
                             ### bounds of the confidence intervals and our point estimates: 
-                            quantile, probs = c(.05,.5,.95))  ## changed to 90 per cent confidence interval
+                            quantile, probs = c(.025, .5, .975))  ## changed to 90 per cent confidence interval
 
 ##The quantile.values1 matrix should contain the lower and upper bounds of the confidence intervals and
 ## the point estimate for each combination of fixed values and the values on the variable we have the range for. 
@@ -213,7 +212,8 @@ plot.points1 <- cbind(range.x,
 
 
 ## for the case without a judgment: 
-quantile.values0 <- apply(X = exp.y0, MARGIN = 1, FUN = quantile, probs = c(.05,.5,.95)) ## changed to 90 per cent confidence interval
+quantile.values0 <- apply(X = exp.y0, MARGIN = 1, FUN = quantile, probs = c(.025,.5,.975)) ## changed to 95 per cent confidence interval
+
 plot.points0 <- cbind(range.x, t(quantile.values0))
 ## Creating the plot
 
@@ -245,7 +245,8 @@ grid.arrange(interaction_plot1, interaction_plot2)
 
 library(separationplot)
 
-separationplot(pred = logit$fitted.values, actual = as.numeric(logit$y), show.expected = TRUE, newplot = FALSE)
+separationplot(pred = logit$fitted.values, actual = as.numeric(logit$y),
+               show.expected = TRUE, newplot = FALSE)
 
 ## ---- braaten_model------------------------------------------------------
 
@@ -291,7 +292,7 @@ multinom <- multinom(USVOTE ~ ## our dependen variable
 
 
 summary(multinom)
-head(multinom$fitted.values)
+tail(multinom$fitted.values)
 
 ## ---- braaten_table, results='asis'--------------------------------------
 ###How to report in stargazer: 
