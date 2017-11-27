@@ -1,5 +1,5 @@
 ---
-title: "Seminar 3"
+title: "Seminar 2"
 author: "Martin Søyland"
 output:
   html_document:
