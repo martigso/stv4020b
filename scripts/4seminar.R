@@ -1,8 +1,3 @@
-## ----setup, include=FALSE------------------------------------------------
-knitr::opts_chunk$set(echo = TRUE, tidy = FALSE)
-knitr::opts_knit$set(root.dir = "../")
-options(width = 100)
-
 rm(list = ls())
 
 ## ----a_note--------------------------------------------------------------
@@ -15,7 +10,9 @@ cbind(first, second)
 ## ----reading_data--------------------------------------------------------
 library(haven)
 
-rain_raw <- read_dta("./data/H_S_JPR_491_Replication_Revised.dta")
+# rain_raw <- read_dta("./data/H_S_JPR_491_Replication_Revised.dta")
+rain_raw <- read_dta("https://github.com/martigso/stv4020b/raw/master/data/H_S_JPR_491_Replication_Revised.dta")
+
 
 rain_raw[1:10, 1:6]
 
@@ -56,7 +53,7 @@ rain_raw %>%
 
 ## ----pois_distrib--------------------------------------------------------
 
-ggplot(NULL, aes(x = rpois(1000, 1.5))) + 
+ggplot(NULL, aes(x = rpois(1000, 1))) + 
   stat_density(adjust = 3, geom = "line") + 
   theme_classic()
 
@@ -82,7 +79,7 @@ poisson <- glm(events_no_onset ~                    # count of social conflict e
                  incidence +                        # civil conflict
                  ttrend +                           # time trend
                  factor(year),                      # year dummies
-               family = "poisson",                  #this is how we specify that want a poisson model.
+               family = "poisson",                  # this is how we specify that want a poisson model.
                data = rain)
 summary(poisson)
 
@@ -102,13 +99,11 @@ poisson.cluster.vcov <- cluster.vcov(poisson, cluster = rain$ccode)
 library(lmtest)
 coeftest(poisson, vcov = poisson.cluster.vcov)
 
-# Look! It is the same
-cbind(sqrt(diag(poisson.cluster.vcov)), coeftest(poisson, vcov = poisson.cluster.vcov)[, "Std. Error"])
-
 ## ----overdispersion------------------------------------------------------
 mean(rain$events_no_onset, na.rm = TRUE)
-
 var(rain$events_no_onset, na.rm = TRUE) 
+
+table(rain$events_no_onset)
 
 
 ## ----negbin_distrib------------------------------------------------------
@@ -139,7 +134,6 @@ negBinomial <- glm.nb(events_no_onset ~                      # count of social c
                         ttrend +                             # time trend
                         factor(year),                        # year dummies
                       data = rain)
-
 summary(negBinomial)
 
 ## clustering the variance covariance matrix on country:
@@ -179,9 +173,10 @@ BIC(poisson, negBinomial)
 ## ----simulation----------------------------------------------------------
 
 ### simulating effects:
+set.seed(89567)
 simb <- mvrnorm(n = 1000,
-               mu = na.omit(negBinomial$coefficients), # the list of coefs has an additional dummy for the flawed category 2007
-               Sigma = negBinomial.cluster.vcov)       # whereas the vcov does not
+                mu = na.omit(negBinomial$coefficients), # the list of coefs has an additional dummy for the flawed category 2007
+                Sigma = negBinomial.cluster.vcov)       # whereas the vcov does not
 
 
 ## Setting a range for the variable of interest
@@ -191,6 +186,8 @@ range.GPCP_precip_mm_deviation_sd <- seq(from = min(rain$GPCP_precip_mm_deviatio
 
 
 ## Creating a scenario with 0 lagged conflict, other variables at mean and 1999 as the year
+colnames(vcov(negBinomial))
+
 set.x <- cbind(1, # intercept,
                0, # no lagged conflict in t-1
                range.GPCP_precip_mm_deviation_sd, # our range of rainfall deviations,
@@ -204,6 +201,7 @@ set.x <- cbind(1, # intercept,
                mean(rain$log_rgdpch_pwt, na.rm = TRUE), mean(rain$grgdpch_pwt,na.rm = TRUE),0,
                median(rain$ttrend), 
                0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0) # year dummies
+
 
 ## calculating the expected count
 x.beta <- set.x %*% t(simb)
@@ -234,29 +232,28 @@ ggplot(plot.points, aes(x = range_rain_dev, y = m)) +
 
 negBinomial$theta
 
-
 theta_boot <- function(n_rows){
 
   # Extracting the rows to run the regression on
   rows <- sample(1:nrow(rain), n_rows)
 
   # Running the regression on random
-  tmp <- negBinomial <- glm.nb(events_no_onset ~
-                          events_no_onset_l +
-                          GPCP_precip_mm_deviation_sd  +
-                          GPCP_precip_mm_deviation_sd_sq +
-                          GPCP_precip_mm_deviation_sd_l +
-                          GPCP_precip_mm_deviation_sd_l_sq +
-                          polity2 +
-                          polity2_sq +
-                          log_pop_pwt +
-                          log_pop_pwt_fd  +
-                          log_rgdpch_pwt +
-                          grgdpch_pwt +
-                          incidence +
-                          ttrend +
-                          factor(year),
-                        data = rain[rows, ])
+  tmp <- glm.nb(events_no_onset ~
+                  events_no_onset_l +
+                  GPCP_precip_mm_deviation_sd  +
+                  GPCP_precip_mm_deviation_sd_sq +
+                  GPCP_precip_mm_deviation_sd_l +
+                  GPCP_precip_mm_deviation_sd_l_sq +
+                  polity2 +
+                  polity2_sq +
+                  log_pop_pwt +
+                  log_pop_pwt_fd  +
+                  log_rgdpch_pwt +
+                  grgdpch_pwt +
+                  incidence +
+                  ttrend +
+                  factor(year),
+                data = rain[rows, ])
 
   return(tmp$theta)
 }
@@ -265,13 +262,14 @@ theta_boot <- function(n_rows){
 set.seed(58793)
 
 # testing the function
-theta_boot(nrow(rain) / 2)
+theta_boot(n_rows = nrow(rain) / 2)
 
 # running it 100 times
-hm <- sapply(1:50, function(x) theta_boot(nrow(rain) / 2))
+th_boot <- sapply(1:50, function(x) theta_boot(nrow(rain) / 2))
 
+th_boot
 # extracting 95% interval
-quantile(hm, c(.025, .5, .975))
+quantile(th_boot, c(.025, .5, .975))
 
 ## ----std_boot------------------------------------------------------------
 
@@ -289,7 +287,9 @@ bs.negbin <- function(formula, data, rows) {
 
 # bootstrapping with 100 replications
 library(boot)
+
 set.seed(58793)
+
 boots <- boot(data = rain,           # the data argument
               statistic = bs.negbin, # the statistic we want the bootstrap for. Here this is the function defined above
               R = 100,               # the number of bootstrap replicates. You may want to increase it, but that will mean that the code needs more time to run!
@@ -299,7 +299,8 @@ boots <- boot(data = rain,           # the data argument
                 GPCP_precip_mm_deviation_sd_l_sq + polity2 + polity2_sq +
                 log_pop_pwt + log_pop_pwt_fd + log_rgdpch_pwt + grgdpch_pwt +
                 incidence + ttrend + factor(year))
-
+boots
+boots$t
 ## retrieving the standard error
 ## this standard error is just the standard deviation of the bootstap replicates of the coefs:
 apply(boots$t, 2, sd)
@@ -323,6 +324,8 @@ hurdle <- hurdle(events_no_onset ~  # dependent variable
                  dist = "negbin", zero.dist = "binomial", link = "logit")
 summary(hurdle)
 # alternative to stargazer
+
+
 library(texreg)
 screenreg(hurdle)
 
@@ -355,7 +358,8 @@ screenreg(zeroinflated)
 htmlreg(zeroinflated)
 
 ## ----cowsay,results='asis'-----------------------------------------------
-cowsay::say("Good luck with assignment 4!!!", "cow")
+
+cowsay::say("Good luck with assignment 4!!!", "snowman")
 
 ## ----ikketenkpådenne, eval=FALSE, echo=FALSE-----------------------------
 ## knitr::purl("./docs/4seminar.Rmd", output = "./scripts/4seminar.R", documentation = 1)
